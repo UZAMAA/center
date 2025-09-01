@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Payment Recorder</title>
+    <!-- Tailwind CSS CDN for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+            color: #1f2937;
+        }
+        /* Custom styles for the table */
+        th, td {
+            min-width: 120px; /* Ensures columns are not too narrow */
+            white-space: nowrap;
+        }
+        .payment-cell {
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .payment-cell:hover {
+            background-color: #e5e7eb;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+
+    <!-- Main container for the app -->
+    <div id="app" class="w-full max-w-5xl bg-white rounded-3xl shadow-2xl p-8 transition-all duration-300">
+        <!-- Header Section -->
+        <div class="flex flex-col sm:flex-row justify-between items-center mb-6 border-b pb-4">
+            <h1 id="page-title" class="text-3xl font-bold text-gray-800 mb-4 sm:mb-0">Student Payment Recorder</h1>
+            <div class="flex space-x-2">
+                <!-- Button to navigate back to the main grade list -->
+                <button id="back-button" class="hidden px-6 py-2 bg-gray-200 text-gray-700 rounded-full font-semibold hover:bg-gray-300 transition-colors duration-200">
+                    ← Back to Grades
+                </button>
+                <!-- Button to add a new grade or student -->
+                <button id="add-button" class="px-6 py-2 bg-blue-600 text-white rounded-full font-semibold hover:bg-blue-700 transition-colors duration-200">
+                    Add Grade
+                </button>
+            </div>
+        </div>
+
+        <!-- Content area where grades or students will be displayed -->
+        <div id="content-container">
+            <!-- This area will be dynamically populated by JavaScript -->
+        </div>
+    </div>
+
+    <!-- Modal for adding grades, students, or column names -->
+    <div id="modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 hidden items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-lg p-6 w-full max-w-lg">
+            <h2 id="modal-title" class="text-2xl font-bold mb-4 text-gray-800"></h2>
+            <div id="modal-content">
+                <!-- Input fields will be added here dynamically -->
+            </div>
+            <div class="flex justify-end space-x-3 mt-4">
+                <button id="modal-cancel-button" class="px-5 py-2 text-gray-600 rounded-full hover:bg-gray-100 transition-colors">Cancel</button>
+                <button id="modal-save-button" class="px-5 py-2 bg-blue-600 text-white rounded-full font-semibold hover:bg-blue-700 transition-colors">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div id="confirm-modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 hidden items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-xl shadow-lg p-6 w-full max-w-sm">
+            <h2 id="confirm-title" class="text-2xl font-bold mb-4 text-gray-800">Confirm Deletion</h2>
+            <p id="confirm-message" class="text-gray-600 mb-6"></p>
+            <div class="flex justify-end space-x-3 mt-4">
+                <button id="confirm-cancel-button" class="px-5 py-2 text-gray-600 rounded-full hover:bg-gray-100 transition-colors">Cancel</button>
+                <button id="confirm-delete-button" class="px-5 py-2 bg-red-600 text-white rounded-full font-semibold hover:bg-red-700 transition-colors">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Use a self-invoking function to avoid polluting the global scope
+        (async function() {
+            // --- DOM Elements ---
+            const app = document.getElementById('app');
+            const pageTitle = document.getElementById('page-title');
+            const addButton = document.getElementById('add-button');
+            const backButton = document.getElementById('back-button');
+            const contentContainer = document.getElementById('content-container');
+
+            // Text Input Modal
+            const modal = document.getElementById('modal');
+            const modalTitle = document.getElementById('modal-title');
+            const modalContent = document.getElementById('modal-content');
+            const modalSaveButton = document.getElementById('modal-save-button');
+            const modalCancelButton = document.getElementById('modal-cancel-button');
+
+            // Confirmation Modal
+            const confirmModal = document.getElementById('confirm-modal');
+            const confirmTitle = document.getElementById('confirm-title');
+            const confirmMessage = document.getElementById('confirm-message');
+            const confirmCancelButton = document.getElementById('confirm-cancel-button');
+            const confirmDeleteButton = document.getElementById('confirm-delete-button');
+
+            // --- Constants and State ---
+            const FIXED_PAYMENT_AMOUNT = 20;
+            const NUM_PAYMENT_COLUMNS = 7;
+
+            let currentPage = 'grades';
+            let currentGradeId = null;
+            let data = {}; // In-memory data store for grades and students
+
+            // --- Utility Functions ---
+            const loadData = async () => {
+                try {
+                    const response = await fetch('/api/data');
+                    if (!response.ok) throw new Error('Failed to fetch');
+                    return await response.json();
+                } catch (e) {
+                    console.error("Could not load data from server", e);
+                    return {};
+                }
+            };
+
+            const saveData = async () => {
+                try {
+                    await fetch('/api/data', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(data)
+                    });
+                } catch (e) {
+                    console.error("Could not save data to server", e);
+                }
+            };
+
+            const generateId = () => {
+                return '_' + Math.random().toString(36).substring(2, 9);
+            };
+
+            const showModal = (title, buttonText) => {
+                modalTitle.textContent = title;
+                modalSaveButton.textContent = buttonText;
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+            };
+
+            const hideModal = () => {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+                modalContent.innerHTML = '';
+            };
+
+            const showConfirmModal = (message, onConfirmCallback) => {
+                confirmMessage.textContent = message;
+                confirmModal.classList.remove('hidden');
+                confirmModal.classList.add('flex');
+
+                confirmDeleteButton.onclick = () => {
+                    onConfirmCallback();
+                    hideConfirmModal();
+                };
+            };
+
+            const hideConfirmModal = () => {
+                confirmModal.classList.add('hidden');
+                confirmModal.classList.remove('flex');
+            };
+
+            // --- Render Functions ---
+
+            const renderGrades = () => {
+                currentPage = 'grades';
+                currentGradeId = null;
+                pageTitle.textContent = 'Student Payment Recorder';
+                addButton.textContent = 'Add Grade';
+                backButton.classList.add('hidden');
+                contentContainer.innerHTML = '';
+
+                const gradeIds = Object.keys(data);
+                if (gradeIds.length === 0) {
+                    contentContainer.innerHTML = `
+                        <div class="text-center py-10 text-gray-500">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.435 9.172 5 7.5 5S4.168 5.435 3 6.253M12 6.253c1.168-.818 2.828-1.253 4.5-1.253s3.332.435 4.5 1.253m-12 13C5.168 18.565 6.828 19 8.5 19s3.332-.435 4.5-1.253" />
+                            </svg>
+                            <p class="text-lg">No grades added yet. Click "Add Grade" to get started!</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                gradeIds.forEach(id => {
+                    const grade = data[id];
+                    const gradeCard = document.createElement('div');
+                    gradeCard.className = 'grade-card p-6 bg-gray-50 rounded-2xl shadow-sm hover:shadow-md transition-all duration-300 mb-4';
+                    gradeCard.dataset.gradeId = id;
+                    gradeCard.innerHTML = `
+                        <div class="flex items-center justify-between">
+                            <h2 class="text-xl font-bold text-gray-700 cursor-pointer">${grade.name}</h2>
+                            <div class="flex space-x-2">
+                                <button class="edit-grade-button px-3 py-1 bg-gray-200 text-gray-700 rounded-full text-sm font-semibold hover:bg-gray-300">Edit</button>
+                                <button class="delete-grade-button px-3 py-1 bg-red-100 text-red-600 rounded-full text-sm font-semibold hover:bg-red-200">Delete</button>
+                            </div>
+                        </div>
+                        <span class="text-sm font-medium text-gray-500 block mt-2">
+                            ${grade.students.length} Student${grade.students.length !== 1 ? 's' : ''}
+                        </span>
+                    `;
+                    gradeCard.querySelector('h2').addEventListener('click', () => renderStudents(id));
+                    gradeCard.querySelector('.edit-grade-button').addEventListener('click', (e) => { e.stopPropagation(); editGrade(id); });
+                    gradeCard.querySelector('.delete-grade-button').addEventListener('click', (e) => { e.stopPropagation(); deleteGrade(id); });
+                    contentContainer.appendChild(gradeCard);
+                });
+            };
+
+            const renderStudents = (gradeId) => {
+                const grade = data[gradeId];
+                if (!grade) { renderGrades(); return; }
+                currentPage = 'students';
+                currentGradeId = gradeId;
+                pageTitle.textContent = grade.name;
+                addButton.textContent = 'Add Student';
+                backButton.classList.remove('hidden');
+                contentContainer.innerHTML = '';
+
+                if (grade.students.length === 0) {
+                    contentContainer.innerHTML = `<div class="text-center py-10 text-gray-500"><p class="text-lg">No students yet. Click "Add Student".</p></div>`;
+                    return;
+                }
+
+                const tableContainer = document.createElement('div');
+                tableContainer.className = 'w-full overflow-x-auto';
+                let tableHTML = `<table class="min-w-full divide-y divide-gray-200 rounded-lg shadow-sm"><thead class="bg-gray-50"><tr><th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider rounded-tl-lg">Student Name</th>`;
+                grade.columns.forEach(col => { tableHTML += `<th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">${col}</th>`; });
+                tableHTML += `<th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider rounded-tr-lg">Actions</th></tr></thead><tbody class="bg-white divide-y divide-gray-200" id="student-list"></tbody></table>`;
+                tableContainer.innerHTML = tableHTML;
+
+                const studentList = tableContainer.querySelector('#student-list');
+                grade.students.forEach(student => {
+                    const studentRow = document.createElement('tr');
+                    studentRow.className = 'student-row hover:bg-gray-50 transition-colors duration-200';
+                    let rowHTML = `<td class="px-6 py-4 whitespace-nowrap font-medium text-gray-900">${student.name}</td>`;
+                    for (let i = 0; i < NUM_PAYMENT_COLUMNS; i++) {
+                        const payment = student.payments[i];
+                        rowHTML += payment ? `<td class="px-6 py-4 whitespace-nowrap text-green-800 text-sm bg-green-100 rounded-lg">${payment.date} ($${payment.amount})</td>` : `<td class="payment-cell px-6 py-4 text-center text-gray-400 font-medium border-dashed border-2 border-gray-200 rounded-lg" data-student-id="${student.id}" data-column-index="${i}">+</td>`;
+                    }
+                    rowHTML += `<td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium"><button class="edit-student-button px-3 py-1 bg-gray-200 text-gray-700 rounded-full text-sm font-semibold hover:bg-gray-300 mr-2" data-student-id="${student.id}">Edit</button><button class="delete-student-button px-3 py-1 bg-red-100 text-red-600 rounded-full text-sm font-semibold hover:bg-red-200" data-student-id="${student.id}">Delete</button></td>`;
+                    studentRow.innerHTML = rowHTML;
+                    studentList.appendChild(studentRow);
+                });
+
+                contentContainer.appendChild(tableContainer);
+
+                tableContainer.querySelectorAll('.payment-cell').forEach(cell => cell.addEventListener('click', (e) => recordPayment(e.target.dataset.studentId, parseInt(e.target.dataset.columnIndex))));
+                tableContainer.querySelectorAll('.edit-student-button').forEach(btn => btn.addEventListener('click', (e) => editStudent(e.target.dataset.studentId)));
+                tableContainer.querySelectorAll('.delete-student-button').forEach(btn => btn.addEventListener('click', (e) => deleteStudent(e.target.dataset.studentId)));
+            };
+
+            // --- Core Logic Functions (CRUD) ---
+
+            const addGrade = async (gradeName) => {
+                const newGradeId = generateId();
+                data[newGradeId] = { id: newGradeId, name: gradeName, students: [], columns: [] };
+                hideModal();
+                await promptForColumnNames(newGradeId);
+            };
+
+            const editGrade = async (gradeId) => {
+                const grade = data[gradeId];
+                if (!grade) return;
+                showModal('Edit Grade Name', 'Save');
+                modalContent.innerHTML = `<input type="text" id="grade-name-input" value="${grade.name}" class="w-full p-3 mb-4 border border-gray-300 rounded-lg">`;
+                const input = modalContent.querySelector('input');
+                input.focus();
+                modalSaveButton.onclick = async () => {
+                    const newName = input.value.trim();
+                    if (newName) {
+                        grade.name = newName;
+                        await saveData();
+                        renderGrades();
+                        hideModal();
+                    }
+                };
+            };
+
+            const deleteGrade = (gradeId) => {
+                const grade = data[gradeId];
+                if (!grade) return;
+                showConfirmModal(`Delete grade "${grade.name}" and all students?`, async () => {
+                    delete data[gradeId];
+                    await saveData();
+                    renderGrades();
+                });
+            };
+
+            const addStudent = async (studentName) => {
+                if (currentGradeId) {
+                    const newStudent = { id: generateId(), name: studentName, payments: new Array(NUM_PAYMENT_COLUMNS).fill(null) };
+                    data[currentGradeId].students.push(newStudent);
+                    await saveData();
+                    renderStudents(currentGradeId);
+                    hideModal();
+                }
+            };
+
+            const editStudent = (studentId) => {
+                const student = data[currentGradeId]?.students.find(s => s.id === studentId);
+                if (!student) return;
+                showModal('Edit Student Name', 'Save');
+                modalContent.innerHTML = `<input type="text" id="student-name-input" value="${student.name}" class="w-full p-3 mb-4 border border-gray-300 rounded-lg">`;
+                const input = modalContent.querySelector('input');
+                input.focus();
+                modalSaveButton.onclick = async () => {
+                    const newName = input.value.trim();
+                    if (newName) {
+                        student.name = newName;
+                        await saveData();
+                        renderStudents(currentGradeId);
+                        hideModal();
+                    }
+                };
+            };
+
+            const deleteStudent = (studentId) => {
+                const studentIndex = data[currentGradeId]?.students.findIndex(s => s.id === studentId);
+                if (studentIndex === -1) return;
+                const studentName = data[currentGradeId].students[studentIndex].name;
+                showConfirmModal(`Delete student "${studentName}"?`, async () => {
+                    data[currentGradeId].students.splice(studentIndex, 1);
+                    await saveData();
+                    renderStudents(currentGradeId);
+                });
+            };
+
+            const recordPayment = async (studentId, columnIndex) => {
+                const student = data[currentGradeId]?.students.find(s => s.id === studentId);
+                if (!student) return;
+                student.payments[columnIndex] = { date: new Date().toLocaleDateString(), amount: FIXED_PAYMENT_AMOUNT };
+                await saveData();
+                renderStudents(currentGradeId);
+            };
+
+            const promptForColumnNames = (gradeId) => {
+                return new Promise(resolve => {
+                    showModal('Name Your 7 Payment Columns', 'Save Columns');
+                    let inputsHTML = '';
+                    for (let i = 0; i < NUM_PAYMENT_COLUMNS; i++) {
+                        inputsHTML += `<input type="text" class="column-name-input w-full p-3 mb-3 border border-gray-300 rounded-lg" placeholder="Column ${i + 1} Name...">`;
+                    }
+                    modalContent.innerHTML = inputsHTML;
+
+                    modalSaveButton.onclick = async () => {
+                        const inputs = modalContent.querySelectorAll('.column-name-input');
+                        const columnNames = Array.from(inputs).map(input => input.value.trim());
+                        if (columnNames.every(name => name)) {
+                            data[gradeId].columns = columnNames;
+                            await saveData();
+                            renderStudents(gradeId);
+                            hideModal();
+                            resolve();
+                        } else {
+                            // Simple alert for feedback
+                            alert("Please name all 7 columns.");
+                        }
+                    };
+                });
+            };
+
+            // --- Event Handlers ---
+            const handleAddButtonClick = () => {
+                if (currentPage === 'grades') {
+                    showModal('Add New Grade', 'Add Grade');
+                    modalContent.innerHTML = `<input type="text" id="grade-name-input" placeholder="Enter grade name..." class="w-full p-3 mb-4 border rounded-lg">`;
+                    const input = modalContent.querySelector('input');
+                    input.focus();
+                    modalSaveButton.onclick = () => {
+                        if (input.value.trim()) addGrade(input.value.trim());
+                    };
+                } else if (currentPage === 'students') {
+                    showModal('Add New Student', 'Add Student');
+                    modalContent.innerHTML = `<input type="text" id="student-name-input" placeholder="Enter student name..." class="w-full p-3 mb-4 border rounded-lg">`;
+                    const input = modalContent.querySelector('input');
+                    input.focus();
+                    modalSaveButton.onclick = () => {
+                        if (input.value.trim()) addStudent(input.value.trim());
+                    };
+                }
+            };
+
+            // --- Initialization ---
+            const init = async () => {
+                data = await loadData();
+                renderGrades();
+
+                addButton.addEventListener('click', handleAddButtonClick);
+                backButton.addEventListener('click', renderGrades);
+                modalCancelButton.addEventListener('click', hideModal);
+                confirmCancelButton.addEventListener('click', hideConfirmModal);
+
+                document.addEventListener('click', (e) => {
+                    if (e.target === modal) hideModal();
+                    if (e.target === confirmModal) hideConfirmModal();
+                });
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape') {
+                        if (!modal.classList.contains('hidden')) hideModal();
+                        if (!confirmModal.classList.contains('hidden')) hideConfirmModal();
+                    }
+                });
+            };
+
+            init();
+        })();
+    </script>
+</body>
+</html>
